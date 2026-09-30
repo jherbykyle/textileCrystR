@@ -152,6 +152,7 @@ test_that(".render_report reports a missing rmarkdown installation clearly", {
 })
 
 test_that(".render_report reports a missing template file clearly", {
+  skip_if_not_installed("rmarkdown")
   res <- analyze_textile_file(cotton_path(), sample = "0%/1", preset = "cotton_validation",
                               plot = FALSE)
   err <- tryCatch(.render_report(list(result = res), tempfile(fileext = ".html"), template = ""),

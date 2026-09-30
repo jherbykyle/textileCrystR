@@ -1,0 +1,265 @@
+---
+title: "Getting Started with textileCrystR"
+author: "textileCrystR"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting Started with textileCrystR}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.2, dpi = 96)
+library(textileCrystR)
+```
+
+This vignette is a practical, start-to-finish tour of `textileCrystR` as a
+piece of software: install it, point it at a file, get a number and a plot,
+and export the results -- without needing to know the internals of
+`segal_ci()` or write any plotting code yourself. For the scientific detail
+behind the Segal index itself (its equation, presets and limitations) see
+`vignette("segal-cotton-validation")` and `?textileCrystR`; this vignette is
+about *using* the package.
+
+## 1. Install
+
+```r
+install.packages("textileCrystR")
+
+# Optional, only needed for the interactive dashboard (Section 8):
+install.packages(c("shiny", "rmarkdown"))
+```
+
+```{r library}
+library(textileCrystR)
+```
+
+## 2. The one-line quick start
+
+The fastest way to use the package is `analyze_textile_file()`: point it at
+a file and it reads, validates, calculates and plots in one call. We'll use
+the experimental cotton XRD data set shipped with the package.
+
+```{r quickstart}
+path <- system.file("extdata", "cotton.csv", package = "textileCrystR")
+res <- analyze_textile_file(path, sample = "0%/1")
+```
+
+`res` is the same kind of result `segal_ci()` returns, so everything you can
+do with it there works here too:
+
+```{r quickstart-inspect}
+res
+summary(res)
+```
+
+## 3. Loading your own data
+
+Real files are messier than a tidy example, so `import_xrd_file()` (used
+internally by `analyze_textile_file()`, and also usable on its own) is
+forgiving about format: it auto-detects the delimiter (comma, tab,
+semicolon or plain whitespace), whether there's a header row, and -- from
+header names like "Angle"/"2-theta" and "Counts"/"Intensity" -- which
+column is which.
+
+```{r import-plain}
+tt <- seq(5, 40, by = 0.05)
+y <- 300 + 4000 * exp(-((tt - 22.7) / 1.1)^2) + 1500 * exp(-((tt - 16) / 1.5)^2)
+f <- tempfile(fileext = ".csv")
+writeLines(c("Angle,Counts", paste(round(tt, 3), round(y, 1), sep = ",")), f)
+
+xrd <- import_xrd_file(f)
+head(xrd)
+```
+
+If your file has no header, or names its columns in a way the package
+doesn't recognize, tell it explicitly which columns to use with `cols`:
+
+```{r import-cols}
+f2 <- tempfile(fileext = ".csv")
+writeLines(paste(round(tt, 3), round(y, 1), sep = ","), f2)  # no header at all
+xrd2 <- import_xrd_file(f2, cols = c(1, 2))
+head(xrd2)
+```
+
+### When something's wrong with the file
+
+Rather than a cryptic parsing error, `import_xrd_file()` explains what it
+saw and what to try. For example, a file where the columns are ambiguous:
+
+```{r import-error, error = TRUE}
+bad <- tempfile(fileext = ".csv")
+writeLines(c("Sample,Reading", "501,3200", "502,3305", "503,3100"), bad)
+import_xrd_file(bad)
+```
+
+The message names the problem (the header didn't name a recognizable
+2-theta column, and the values in column 1 don't look like one either) and
+says exactly what to do (`cols = c(...)`). The same applies to
+`analyze_textile_file()`, a nonexistent path, an unreadable format, and so
+on -- see `?import_xrd_file` for the full list of checks.
+
+## 4. Choosing I200 and Iam: presets, manual positions, and sensitivity
+
+By default, `analyze_textile_file()` uses the `"cellulose_I_segal"` preset
+(I200 = 22.7 degrees, Iam = 18.0 degrees). List the available presets, each
+with its material, reference and limitations:
+
+```{r presets}
+segal_presets()[, c("preset", "material", "i200", "iam")]
+```
+
+Use a different preset, or set positions manually:
+
+```{r positions}
+res_preset <- analyze_textile_file(path, sample = "0%/1", preset = "cotton_validation",
+                                   plot = FALSE)
+res_manual <- analyze_textile_file(path, sample = "0%/1", i200 = 22.55, iam = 17.9,
+                                   plot = FALSE)
+c(preset = res_preset$ci, manual = res_manual$ci)
+```
+
+Positions matter more than they might seem. `segal_sensitivity()` shows how
+much the index moves across a grid of nearby positions:
+
+```{r sensitivity}
+d <- import_xrd_file(path)
+d0 <- d[d$sample == "0%/1", ]
+sens <- segal_sensitivity(d0$two_theta, d0$intensity)
+sens
+```
+
+Report the positions you used alongside any Segal value -- this is why every
+`textile_cryst` result keeps them (`res$points`), and `summary()` prints them.
+
+## 5. Working with multiple samples at once
+
+Files like `cotton.csv` hold several samples. Leave `sample` unset to
+analyze all of them and get a `textile_cryst_batch`:
+
+```{r batch}
+batch <- analyze_textile_file(path, preset = "cotton_validation", plot = FALSE)
+batch
+```
+
+`as.data.frame()` gives the tidy table for further analysis (joining onto
+your own metadata, plotting with your own tools, etc.):
+
+```{r batch-df}
+as.data.frame(batch)
+```
+
+`plot()` on a batch draws every sample's own zoomed-in window, side by side,
+with its I200/Iam points marked -- handy for spotting a sample whose peak
+has drifted from a fixed position, as `100%/1` has here:
+
+```{r batch-plot}
+plot(batch)
+```
+
+## 6. Exporting results
+
+Both single-sample and batch calls can write their outputs directly, so a
+script can go from raw file to finished deliverables in one call:
+
+```{r export}
+out_plot <- tempfile(fileext = ".png")
+out_report <- tempfile(fileext = ".html")
+analyze_textile_file(path, sample = "0%/1", preset = "cotton_validation",
+                     plot = FALSE, plot_file = out_plot, report_file = out_report)
+file.exists(out_plot)
+file.exists(out_report)
+```
+
+`report_file` (needs the `rmarkdown` package) writes a self-contained HTML
+report with the plot, the positions and intensities used, any warnings, and
+the same limitations section as `?textileCrystR` -- suitable for sharing
+with a collaborator who doesn't use R. The exact same template is used by
+the interactive dashboard's "Download summary report" button (Section 8),
+so the two are interchangeable.
+
+## 7. Peak area / deconvolution: a second method
+
+Everything so far has used the Segal method. `textileCrystR` also implements
+a second, independent method -- peak area / deconvolution -- which jointly
+fits several sharp crystalline peaks and one broad amorphous hump, and
+reports crystallinity as the crystalline peaks' combined area over the total
+area:
+
+```{r peakarea-fit}
+fit <- fit_crystalline_peaks(d0$two_theta, d0$intensity, sample = "0%/1")
+fit
+```
+
+```{r peakarea-plot}
+plot_peak_fit(fit)
+```
+
+By default this fits four literature-cited cellulose I crystalline peaks
+((1-10), (110), (200), (004)) plus one amorphous hump, using pseudo-Voigt
+profiles and a linear background term -- real XRD patterns carry a
+background (air scatter, detector dark counts) that a bare "peaks + hump"
+model has no way to represent on its own. The model, peak centers, amorphous
+window and background handling can all be set explicitly; see
+`?fit_crystalline_peaks`.
+
+This is a genuinely independent estimate, not a refinement of the Segal
+value -- the two are not expected to agree, and are never averaged together:
+
+```{r peakarea-vs-segal}
+segal_res <- segal_ci(d0$two_theta, d0$intensity, preset = "cotton_validation")
+c(segal = segal_res$ci, peak_area = fit$ci)
+```
+
+See `?textileCrystR` for why independent XRD methods disagree and how to
+interpret that.
+
+## 8. Going interactive: the dashboard
+
+For point-and-click use across one or many files and samples, with either
+method, launch the bundled Shiny app:
+
+```r
+run_textile_app()
+```
+
+This needs the `shiny` and `rmarkdown` packages (Section 1); the check for
+them, and a clear message if either is missing, happens only when you call
+`run_textile_app()`, not when you load the package. A few things worth
+knowing before you launch it:
+
+* **Upload one or more files** at once. Every sample across every file is
+  pooled into a single selector, labelled by file name only when more than
+  one file is uploaded (keeping the common single-file case uncluttered).
+* **Subtract an estimated background before analysis**, optionally -- a
+  non-parametric SNIP-based estimate (`estimate_xrd_background()`),
+  independent of either method's own settings. Off by default; when on,
+  single-sample mode shows a preview (raw pattern, estimated background,
+  corrected pattern) so you can judge the window before trusting it.
+* **Pick a method** -- Segal or peak area / deconvolution -- from the
+  sidebar; the rest of the sidebar adapts to that method's own controls
+  (positions and presets for Segal; model, peak centers, amorphous window
+  and background for peak area).
+* **Single-sample mode** is a live tuning surface: for Segal, drag the
+  sliders or click directly on the peak/trough in the plot; for peak area,
+  adjust settings and press "Run fit" -- fitting is a real optimization, not
+  an instant calculation, so it isn't tied to every slider movement.
+* **Batch mode** analyzes any number of the pooled samples (or all of them)
+  together with the current method and settings, producing a results table,
+  a comparison chart, and a downloadable CSV. A sample that fails (for
+  example, its measured range doesn't cover the chosen positions) is
+  reported individually without losing the ones that succeeded.
+* The plot/report download buttons (single-sample mode) produce exactly the
+  files `plot_file` and `report_file` do in Section 6, for whichever method
+  is currently selected.
+
+## Where to go next
+
+* `?textileCrystR` -- the full list of scientific limitations and references.
+* `?segal_ci`, `?segal_presets`, `?segal_sensitivity` -- the Segal building
+  blocks, if you want more control than `analyze_textile_file()` gives you.
+* `?fit_crystalline_peaks`, `?fit_amorphous_hump`, `?peak_fit_summary` -- the
+  peak-area / deconvolution building blocks (Section 7).
+* `vignette("segal-cotton-validation")` -- the Segal method itself, validated
+  end to end against the shipped experimental cotton data set.

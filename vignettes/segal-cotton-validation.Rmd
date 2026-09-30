@@ -1,0 +1,281 @@
+---
+title: "Segal Crystallinity Analysis of Experimental Cotton XRD Data"
+author: "textileCrystR"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Segal Crystallinity Analysis of Experimental Cotton XRD Data}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.2,
+                      dpi = 96)
+library(textileCrystR)
+library(ggplot2)
+```
+
+This vignette walks through a complete Segal analysis of a real experimental
+data set: seven X-ray diffraction patterns of cotton containing different
+gravimetric ratios of mercerized and raw cotton. `textileCrystR` also
+implements a second, independent method (peak area / deconvolution -- see
+`vignette("getting-started")`); this vignette focuses specifically on the
+Segal peak-height crystallinity index
+
+$$\mathrm{CI} = \frac{I_{200} - I_{am}}{I_{200}} \times 100 .$$
+
+Throughout, the result is called the **Segal Crystallinity Index**. It is an
+empirical, relative XRD index, not an absolute crystallinity (Segal et al.,
+1959; Nam et al., 2016; Salem et al., 2023). The composition labels of the
+series (0 %/1 ... 100 %/1) are metadata of the samples; they are never used in
+any calculation and are not a ground-truth crystallinity scale.
+
+## 1. Loading the data
+
+`cotton.csv` stores each pattern in two adjacent columns (2θ, intensity) under
+a sample name. `read_xrd_pairs()` reads the file exactly as stored.
+
+```{r load}
+path <- system.file("extdata", "cotton.csv", package = "textileCrystR")
+xrd <- read_xrd_pairs(path)
+head(xrd, 3)
+table(xrd$sample)[c("0%/1", "20%/1", "40%/1", "50%/1", "60%/1", "80%/1", "100%/1")]
+```
+
+## 2. Validation
+
+`validate_crystallinity_input()` checks every pattern before use: numeric
+types, equal lengths, missing values, the 0-180° range, ordering and duplicated
+angles. It never changes measured intensities. Here all seven patterns pass
+without any action being needed.
+
+```{r validate}
+samples <- c("0%/1", "20%/1", "40%/1", "50%/1", "60%/1", "80%/1", "100%/1")
+checks <- do.call(rbind, lapply(samples, function(s) {
+  d <- xrd[xrd$sample == s, ]
+  v <- validate_crystallinity_input(d$two_theta, d$intensity)
+  data.frame(sample = s, points = v$n_used, from = v$range[1], to = v$range[2],
+             step = round(v$median_step, 3), sorted_by_package = v$was_sorted,
+             actions = length(v$messages))
+}))
+knitr::kable(checks, caption = "Input checks for the seven cotton patterns.")
+```
+
+## 3. Segal calculation
+
+We use the validation convention I200 = 22.6° and Iam = 18.0° 2θ. The pattern
+was measured every 0.01°, so both positions coincide with measured points and
+the measured intensities are used exactly. If a requested position were not
+measured, the intensity would be interpolated (see `?segal_points`).
+
+```{r single}
+d <- xrd[xrd$sample == "0%/1", ]
+res <- segal_ci(d$two_theta, d$intensity, i200 = 22.6, iam = 18.0, sample = "0%/1")
+res
+```
+
+## 4. Inspecting the result
+
+The result object keeps everything needed to reproduce the number: the
+positions requested and used, the intensities, the neighbouring measured angles,
+the method settings and the validated pattern.
+
+```{r inspect}
+summary(res)
+res$points
+as.data.frame(res)
+segal_points(d$two_theta, d$intensity, i200 = 22.62, iam = 18.013)[
+  c("i200_position", "i200_intensity", "iam_position", "iam_intensity", "interpolation")]
+```
+
+## 5. Plotting
+
+`plot()` returns an ordinary `ggplot` object, so it can be modified freely.
+
+```{r plot}
+p <- plot(res)
+p
+```
+
+```{r plot-modified}
+p + theme_bw() + labs(title = "Raw cotton (0%/1)") +
+  geom_hline(yintercept = res$points$intensity[2], linetype = "dotted")
+```
+
+At 22.6° the I200 point lies on the low-angle side of the (200) maximum, which
+is close to 22.9° for this sample. This is why the choice of position matters
+(Section 8).
+
+## 6. All seven cotton samples
+
+```{r all}
+fits <- lapply(samples, function(s) {
+  d <- xrd[xrd$sample == s, ]
+  segal_ci(d$two_theta, d$intensity, i200 = 22.6, iam = 18.0, sample = s)
+})
+all_res <- do.call(rbind, lapply(fits, as.data.frame))
+all_res$composition_label_pct <- as.numeric(sub("%.*$", "", all_res$sample))
+knitr::kable(
+  transform(all_res[, c("sample", "ci", "i200_intensity", "iam_intensity")],
+            ci = round(ci, 2), i200_intensity = round(i200_intensity, 1),
+            iam_intensity = round(iam_intensity, 1)),
+  col.names = c("Sample", "Segal CI (%)", "I200 (22.6°)", "Iam (18.0°)"),
+  caption = "Segal Crystallinity Index of the seven cotton patterns.")
+```
+
+```{r composition-plot}
+ggplot(all_res, aes(composition_label_pct, ci)) +
+  geom_line(colour = "#A9B4D0") + geom_point(colour = "#243070", size = 3) +
+  scale_x_continuous(breaks = all_res$composition_label_pct) +
+  labs(x = "Composition label of the sample series (%)", y = "Segal Crystallinity Index (%)",
+       subtitle = "Composition is a sample label, not a crystallinity scale") +
+  theme_minimal()
+```
+
+The index decreases from 71.19 % to 56.96 % across the series but not
+monotonically (40 %/1 is higher than 20 %/1). The gravimetric ratio should not
+be expected to give a linear crystallinity scale, and the series is compared
+here only as an observed relationship.
+
+## 7. Independent reference comparison
+
+The same equation was evaluated independently in a spreadsheet, which reads the
+measured rows of the raw data directly with `INDEX()` and has no interpolation or
+R code in the loop (`data-raw/textileCrystR_cotton_validation.xlsx` in the source
+package; the values it calculated are shipped as
+`inst/extdata/reference_cotton_segal.csv`). This is an *implementation check* of
+the same Segal equation on the same data, not a different scientific method.
+
+```{r reference}
+ref <- read.csv(system.file("extdata", "reference_cotton_segal.csv", package = "textileCrystR"))
+cmp <- merge(all_res[, c("sample", "ci")], ref[, c("sample", "ci_reference")], by = "sample")
+cmp <- cmp[match(samples, cmp$sample), ]
+cmp$abs_difference <- abs(cmp$ci - cmp$ci_reference)
+knitr::kable(data.frame(Sample = cmp$sample,
+                        `CI from R (%)` = round(cmp$ci, 6),
+                        `CI from reference (%)` = round(cmp$ci_reference, 6),
+                        `Absolute difference (pp)` = format(cmp$abs_difference, digits = 2),
+                        check.names = FALSE),
+             caption = "textileCrystR against the spreadsheet calculation.")
+```
+
+The maximum absolute difference is `r format(max(cmp$abs_difference), digits = 2)`
+percentage points (floating-point level). The workbook was prepared for this
+project, so the check verifies the code path, not the choice of positions.
+
+**Literature context (not a benchmark to match).** Nam et al. (2016) report
+Segal CIs of 84.7 % (control cotton) and 68.8 % (mercerized cotton) for their
+own samples and simulations, and Salem et al. (2023, Table 2) list 85-87 % for
+cotton linter by the Segal peak-height method. Values from different instruments,
+sample forms, background treatments and position choices are not comparable, and
+the values here are not expected to match them. What can be said is that the
+direction of change, a lower Segal CI for the sample at the mercerized end of the series, is
+in line with the drop reported by Nam et al. (2016).
+
+## 8. Sensitivity analysis
+
+`segal_sensitivity()` evaluates the index for I200 = 22.2, 22.4, 22.6, 22.8,
+23.0° and Iam = 17.6, 17.8, 18.0, 18.2, 18.4°, and returns the complete 5 × 5
+matrix. This is a robustness analysis, not a rule for choosing positions.
+
+```{r sens-one}
+sens <- segal_sensitivity(d$two_theta, d$intensity, sample = "0%/1")
+sens
+```
+
+```{r sens-all}
+sens_all <- lapply(samples, function(s) {
+  dd <- xrd[xrd$sample == s, ]
+  segal_sensitivity(dd$two_theta, dd$intensity, sample = s)
+})
+names(sens_all) <- samples
+ss <- do.call(rbind, lapply(sens_all, function(z) cbind(sample = z$sample, z$summary)))
+knitr::kable(data.frame(Sample = ss$sample, Min = round(ss$ci_min, 2), Max = round(ss$ci_max, 2),
+                        Range = round(ss$ci_range, 2), Central = round(ss$ci_central, 2)),
+             caption = "Sensitivity of the Segal CI (%) to the I200/Iam positions (Range in percentage points).")
+```
+
+Two points follow from the numbers. First, the spread caused by the position
+choice (5 to 22 percentage points) is larger than most of the differences
+between neighbouring samples in the series, so absolute Segal values should
+always be reported together with the positions used. Second, the position of the
+(200) maximum within the 22-23° window is not constant across the series:
+
+```{r apex}
+apex <- do.call(rbind, lapply(samples, function(s) {
+  dd <- xrd[xrd$sample == s & xrd$two_theta >= 22 & xrd$two_theta <= 23, ]
+  data.frame(Sample = s, `Maximum at (°2θ)` = round(dd$two_theta[which.max(dd$intensity)], 2),
+             check.names = FALSE)
+}))
+knitr::kable(apex, caption = "Position of the intensity maximum between 22 and 23° (diagnostic only).")
+```
+
+The maximum moves from about 22.9° to about 22.05° towards the end of the
+series, which is consistent with the growing contribution of cellulose II
+(whose main reflection lies at lower angle than the cellulose I (200)
+reflection), as expected for mercerization (Nam et al., 2016). Because of this,
+a single fixed position pair reads a different part of the profile in each
+pattern, and the ordering of the samples is not preserved in every cell of the
+grid (it is at the low-angle edge I200 = 22.2°):
+
+```{r ranks}
+grid <- do.call(rbind, lapply(sens_all, as.data.frame))
+wide <- reshape(grid[, c("sample", "i200_position", "iam_position", "ci")],
+                idvar = c("i200_position", "iam_position"), timevar = "sample",
+                direction = "wide")
+rho <- apply(wide[, paste0("ci.", samples)], 1,
+             function(v) cor(v, all_res$ci[match(samples, all_res$sample)], method = "spearman"))
+first_last <- wide[["ci.100%/1"]] < wide[["ci.0%/1"]]
+data.frame(cells = 25, min_spearman_vs_central = round(min(rho), 2),
+           cells_with_rho_at_least_0.85 = sum(rho >= 0.85),
+           `100%/1 below 0%/1` = sum(first_last), check.names = FALSE)
+```
+
+## 9. Limitations
+
+The Segal Crystallinity Index is an **empirical relative XRD index**. Its use
+here and in general is limited by the following points (details and sources in
+`?textileCrystR`):
+
+* **Peak overlap.** Intensity at the amorphous position also contains the tails
+  of broad crystalline peaks; even perfect small cellulose crystals give an index
+  well below 100 %, and real samples never give 0 %.
+* **Crystallite size / FWHM.** Broader peaks change the index at unchanged
+  amorphous content.
+* **Cellulose polymorph.** Cellulose I and II behave differently, and the
+  cellulose II amorphous position underestimates the amorphous fraction.
+* **Preferred orientation.** Sample form and geometry change the I200 : Iam ratio;
+  reflections near 20.3-20.6° close to Iam are affected.
+* **Background handling.** No background correction is applied by the package;
+  values with different treatment are not comparable.
+* **Choice of I200/Iam positions.** See Section 8; report the positions with the value.
+* **Sample preparation.** Pressed powder, nonwoven and fabric samples, and
+  spinning or geometry, can shift the index substantially.
+* **Partially mercerized cotton.** For blends of cellulose I and II the (1-10) and
+  (110) reflections of cellulose I remain near the cellulose II amorphous position,
+  so the Segal method is not appropriate for samples that are not completely
+  mercerized (Nam et al., 2016). The 22.6°/18.0° convention used here is applied
+  identically to all seven patterns for comparability; for the blended samples it
+  is a peak-height ratio at fixed positions, not the crystalline fraction of either
+  polymorph.
+
+Salem et al. (2023) identify four XRD approaches: Segal peak height, peak fitting
+(deconvolution), amorphous subtraction and Rietveld. `textileCrystR` implements
+the first two (see `vignette("getting-started")` for peak area / deconvolution);
+amorphous subtraction and Rietveld integration are intentionally out of scope.
+
+## References
+
+Nam, S., French, A. D., Condon, B. D., Concha, M. (2016). Segal crystallinity index
+revisited by the simulation of X-ray diffraction patterns of cotton cellulose Iβ and
+cellulose II. *Carbohydrate Polymers* 135, 1-9.
+
+Salem, K. S., Kasera, N. K., Rahman, M. A., Jameel, H., Habibi, Y., Eichhorn, S. J.,
+French, A. D., Pal, L., Lucia, L. A. (2023). Comparison and assessment of methods
+for cellulose crystallinity determination. *Chemical Society Reviews*.
+doi:10.1039/d2cs00569g
+
+Segal, L., Creely, J. J., Martin, A. E., Conrad, C. M. (1959). An empirical method
+for estimating the degree of crystallinity of native cellulose using the X-ray
+diffractometer. *Textile Research Journal* 29, 786-794.

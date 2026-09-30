@@ -1,0 +1,49 @@
+Package: textileCrystR
+Type: Package
+Title: XRD Crystallinity Determination for Textile Fibres and Cellulose
+Version: 0.1.0
+Authors@R:
+    person("Jherby Kyle C.", "Teodoro", email = "jherbykyleteodoro17@gmail.com",
+           role = c("aut", "cre", "cph"),
+           comment = c(ORCID = "0009-0009-6675-5821"))
+Description: A small, reproducible toolkit for X-ray diffraction (XRD)
+    crystallinity determination of textile fibres and cellulose materials,
+    implementing distinct published methods rather than claiming a single
+    "true" crystallinity. The Segal peak-height index reads intensities at
+    requested I200 and Iam positions with explicit interpolation; the
+    peak-area (deconvolution) method jointly fits crystalline peaks and an
+    amorphous hump (Gaussian, Lorentzian, pseudo-Voigt or Voigt profiles) and
+    reports crystallinity as the crystalline peak area over the total area.
+    Every result is a documented object with print, summary, plot and
+    data-frame methods, retaining the positions, intensities or fitted
+    parameters used. Literature-supported position presets, a robustness
+    (sensitivity) analysis over a grid of Segal positions, input validation
+    and an experimental cotton validation data set are included. A one-shot
+    wrapper reads a file and produces a result and plot in a single call, and
+    an optional interactive Shiny dashboard supports both methods across
+    multiple uploaded files and samples, either tuned live one sample at a
+    time or analyzed as a batch. Methods are treated throughout as empirical
+    and are never averaged into one crystallinity value (Segal et al.
+    (1959); Nam et al. (2016) <doi:10.1016/j.carbpol.2015.08.035>; Salem et
+    al. (2023) <doi:10.1039/D2CS00569G>).
+License: MIT + file LICENSE
+Encoding: UTF-8
+Depends:
+    R (>= 4.1.0)
+Imports:
+    ggplot2 (>= 3.4.0),
+    minpack.lm,
+    patchwork,
+    stats,
+    tibble,
+    tools,
+    utils
+Suggests:
+    knitr,
+    rmarkdown,
+    shiny (>= 1.7.0),
+    testthat (>= 3.0.0)
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.1
